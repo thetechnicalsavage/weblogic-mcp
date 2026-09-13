@@ -197,20 +197,6 @@ Records go to stderr, and to `WLS_AUDIT_LOG` as JSON Lines if set. **Nothing is 
 stdout** — under the stdio transport stdout is the MCP protocol channel, and a stray `print`
 corrupts the session.
 
-## Prove it is safe
-
-`demo/guardrail_demo.py` runs every guardrail against your live domain, over the real MCP
-protocol, and prints the audit trail it produced:
-
-```bash
-.venv/bin/python demo/guardrail_demo.py
-```
-
-It checks that the read tools work, that an AdminServer shutdown without confirmation is refused,
-that a path-traversal server name is refused, that the allowlist and read-only mode hold, that
-WebLogic itself denies a configuration edit and a datasource creation, that every refusal is
-recorded, and that no credential appears in the log.
-
 ## Configuration
 
 | Variable | Default | Purpose |
