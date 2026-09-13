@@ -131,14 +131,16 @@ def test_jvm_stats_convert_bytes_to_megabytes():
 
 
 @respx.mock
-def test_stopping_admin_server_requires_confirmation():
+def test_stopping_admin_server_requires_confirmation(config_override):
+    config_override(allow_admin_shutdown=True)
     with pytest.raises(ToolError, match="confirm=true"):
         server.control_server("AdminServer", "shutdown")
     assert not respx.calls, "refusal must happen before any request reaches WebLogic"
 
 
 @respx.mock
-def test_stopping_admin_server_proceeds_with_confirmation_and_returns_recovery():
+def test_stopping_admin_server_proceeds_with_confirmation_and_returns_recovery(config_override):
+    config_override(allow_admin_shutdown=True)
     respx.get(f"{LIFECYCLE}/AdminServer").mock(return_value=httpx.Response(200, json={"state": "RUNNING"}))
     respx.post(f"{LIFECYCLE}/AdminServer/shutdown").mock(
         return_value=httpx.Response(200, json={"taskStatus": "TASK COMPLETED", "progress": "success", "completed": True})
@@ -233,3 +235,54 @@ def test_transient_get_failure_is_retried(monkeypatch):
 
 def test_wls_error_carries_http_status():
     assert WlsError("nope", 403).http_status == 403
+
+
+# ---- break-glass token ----------------------------------------------------
+
+
+@respx.mock
+def test_break_glass_token_blocks_action_when_absent(config_override):
+    config_override(destructive_token="s3cr3t-break-glass")
+    with pytest.raises(ToolError, match="break-glass token"):
+        server.control_server("ms1", "start")
+    assert not respx.calls, "refusal must happen before any request reaches WebLogic"
+
+
+@respx.mock
+def test_break_glass_token_blocks_a_wrong_token(config_override):
+    config_override(destructive_token="s3cr3t-break-glass")
+    with pytest.raises(ToolError, match="break-glass token"):
+        server.control_server("ms1", "start", token="guessed")
+    assert not respx.calls
+
+
+@respx.mock
+def test_break_glass_token_allows_the_correct_token(config_override):
+    config_override(destructive_token="s3cr3t-break-glass")
+    respx.get(f"{LIFECYCLE}/ms1").mock(return_value=httpx.Response(200, json={"state": "SHUTDOWN"}))
+    respx.post(f"{LIFECYCLE}/ms1/start").mock(
+        return_value=httpx.Response(200, json={"taskStatus": "TASK COMPLETED", "progress": "success"})
+    )
+
+    result = server.control_server("ms1", "start", token="s3cr3t-break-glass")
+
+    assert result["task_status"] == "TASK COMPLETED"
+
+
+@respx.mock
+def test_break_glass_token_value_is_never_audited(config_override, caplog):
+    config_override(destructive_token="s3cr3t-break-glass")
+    caplog.set_level("INFO", logger="wls_mcp.audit")
+    with pytest.raises(ToolError):
+        server.control_server("ms1", "start", token="s3cr3t-break-glass-wrong")
+    logged = " ".join(r.message for r in caplog.records)
+    assert "s3cr3t" not in logged, "the token must never reach the audit log"
+    assert "token_supplied" in logged, "whether a token was supplied must still be auditable"
+
+
+@respx.mock
+def test_admin_shutdown_is_now_denied_by_default():
+    # Secure by default: allow_admin_shutdown is False unless explicitly enabled.
+    with pytest.raises(ToolError, match="disabled"):
+        server.control_server("AdminServer", "shutdown", confirm=True)
+    assert not respx.calls

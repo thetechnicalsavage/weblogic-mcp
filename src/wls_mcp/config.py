@@ -1,3 +1,5 @@
+# v1.1 - changelog: WLS_ALLOW_ADMIN_SHUTDOWN now defaults to false (secure by default), and
+#        WLS_DESTRUCTIVE_TOKEN adds a break-glass secret that an agent cannot talk its way past.
 # v1.0
 """Configuration, read once from the environment at startup.
 
@@ -37,7 +39,8 @@ class Config:
     password: str
     verify_tls: bool = True
     read_only: bool = False
-    allow_admin_shutdown: bool = True
+    allow_admin_shutdown: bool = False
+    destructive_token: str | None = None
     allowed_servers: tuple[str, ...] = ()
     timeout: float = 30.0
     lifecycle_timeout: float = 180.0
@@ -62,7 +65,8 @@ class Config:
             password=password,  # type: ignore[arg-type]
             verify_tls=_flag("WLS_VERIFY_TLS", True),
             read_only=_flag("WLS_READ_ONLY", False),
-            allow_admin_shutdown=_flag("WLS_ALLOW_ADMIN_SHUTDOWN", True),
+            allow_admin_shutdown=_flag("WLS_ALLOW_ADMIN_SHUTDOWN", False),
+            destructive_token=os.getenv("WLS_DESTRUCTIVE_TOKEN") or None,
             allowed_servers=allowed,
             timeout=_seconds("WLS_TIMEOUT_SECONDS", 30.0),
             lifecycle_timeout=_seconds("WLS_LIFECYCLE_TIMEOUT_SECONDS", 180.0),

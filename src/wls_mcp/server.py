@@ -1,3 +1,6 @@
+# v1.5 - changelog: add the break-glass token gate on control_server. Unlike `confirm`, which a
+#        model can set by itself once a user argues for it, the token is a secret the model does
+#        not hold - so it cannot be reasoned past, only supplied by a human.
 # v1.4 - changelog: use fullmatch so a trailing newline cannot satisfy the name pattern; clip
 #        and cap the list_servers payload too.
 # v1.3 - changelog: URL-encode server names into REST paths and reject malformed ones; require
@@ -12,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import logging
 import os
 import re
@@ -242,19 +246,31 @@ def get_jvm_stats(server_name: str) -> dict[str, Any]:
         "Start or stop a WebLogic server through Node Manager. action is one of: 'start', "
         "'shutdown' (graceful), 'force_shutdown' (immediate, use to clear a wedged server). "
         "Stopping the Administration Server also stops the REST API this tool depends on, so it "
-        "requires confirm=true and cannot be undone through this tool."
+        "requires confirm=true and cannot be undone through this tool. If this server is "
+        "configured with a break-glass token, every action additionally requires that token, "
+        "which only a human operator can provide - never guess it."
     ),
     annotations=ToolAnnotations(
         title="Start or stop a WebLogic server", read_only_hint=False, destructive_hint=True, idempotent_hint=False
     ),
 )
-def control_server(server_name: str, action: str, confirm: bool = False) -> dict[str, Any]:
+def control_server(server_name: str, action: str, confirm: bool = False, token: str = "") -> dict[str, Any]:
     def work() -> dict[str, Any]:
         if CONFIG.read_only:
             raise ToolError("This MCP server runs in read-only mode (WLS_READ_ONLY); refusing to change state.")
         if not isinstance(action, str) or action not in ACTIONS:
             raise ToolError(f"Unknown action '{action}'. Use one of: {', '.join(sorted(ACTIONS))}.")
         _check_server_allowed(server_name)
+
+        # Break-glass gate. `confirm` is a flag the model can set on its own the moment a user
+        # argues for it; this is a secret the model does not have. Only a human can supply it.
+        if CONFIG.destructive_token:
+            if not isinstance(token, str) or not hmac.compare_digest(token, CONFIG.destructive_token):
+                raise ToolError(
+                    f"'{action}' on '{server_name}' requires the break-glass token configured for "
+                    "this server. You do not have it and must not guess it - ask the operator to "
+                    "supply it, or tell them to perform this action themselves."
+                )
 
         is_admin = server_name == CONFIG.admin_server_name
         stopping = action in ("shutdown", "force_shutdown")
@@ -303,7 +319,10 @@ def control_server(server_name: str, action: str, confirm: bool = False) -> dict
 
     return _guarded(
         "control_server",
-        {"server_name": server_name, "action": action, "confirm": confirm},
+        # The token is deliberately recorded as a boolean: whether one was supplied is auditable,
+        # its value is not written anywhere.
+        {"server_name": server_name, "action": action, "confirm": confirm,
+         "token_supplied": bool(token)},
         server_name,
         work,
     )
